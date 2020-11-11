@@ -1,0 +1,3 @@
+---
+
+c_target_hosts: "{{ lookup('env', 'target_hosts') }}"

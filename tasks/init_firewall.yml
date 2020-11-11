@@ -1,0 +1,134 @@
+---
+########################################################################
+# 【行为概述】
+# 调用：precheck
+# 检查防火墙是否正在运行中
+# 安装 iptables
+# 【防火墙运行中时执行】
+## 设置 iptables 允许 ssh 远程连接（仅公司内部网络，由 g_sshd_white_list 全局参数预定义）
+## 合并当前 iptables 策略
+## 设置 firewalld 允许 ssh 远程连接（仅公司内部网络，由 g_sshd_white_list 全局参数预定义）
+## 重启 iptables/firewalld
+# 【防火墙未运行中时执行】
+## 禁止 iptables 自启动（iptables 当前未在运行中）
+## 禁止 firewalld 自启动（firewalld 当前未在运行中）
+
+
+
+- include_tasks: precheck.yml
+
+- name: "【OSInitFirewall】检查防火墙是否正在运行中"
+  shell:
+    "service {{ 'iptables' if ansible_distribution_major_version | int in (5, 6) else 'firewalld' }} status"
+  become: true
+  register: r_service_iptable_status
+  failed_when: " 1 == 2 "
+  args:
+    warn: false
+
+- block:
+    - name: "【OSInitFirewall】安装 iptables"
+      yum:
+        name:
+          - iptables
+        state: present
+      become: true
+      when: ansible_distribution_major_version | int == 6
+    - name: "【OSInitFirewall】安装 firewalld"
+      yum:
+        name:
+          - firewalld
+        state: present
+      become: true
+      when: ansible_distribution_major_version | int == 7
+    - name: "【OSInitFirewall】获取 sshd 端口号"
+      shell:
+        cmd: |
+          ss -antlp  | \
+          grep -i sshd | \
+          grep -v ':::' | \
+          awk '{print $4}' | \
+          awk -F':' '{print $2}'
+      register: r_sshd_port
+      become: true
+    - name: "【OSInitFirewall】设置 iptables 允许 ssh 远程连接（仅公司内部网络，由 g_sshd_white_list 全局参数预定义）"
+      iptables:
+        action: insert
+        chain: INPUT
+        source: "{{ item }}"
+        protocol: tcp
+        destination_port: "{{ r_sshd_port.stdout }}"
+        ctstate: NEW
+        syn: match
+        jump: ACCEPT
+        comment: by db2s.
+      with_items: "{{ g_sshd_white_list }}"
+      become: true
+      when: ansible_distribution_major_version | int == 6 and r_service_iptable_status.rc in(0,)
+    - name: "【OSInitFirewall】合并当前 iptables 策略"
+      shell:
+        cmd: |
+          backup_file="{{ g_remote_manual_backup_dir }}/iptables_backup$(date +%s%N)" && \
+          iptables-save > ${backup_file} && \
+          iptables-save | awk '!x[$0]++' > /tmp/iptables.conf && \
+          iptables -F && \
+          iptables-restore < /tmp/iptables.conf && \
+          service iptables save && \
+          service iptables restart && \
+          chkconfig iptables on
+      become: true
+      when: ansible_distribution_major_version | int == 6 and r_service_iptable_status.rc in(0,)
+    - name: "【OSInitFirewall】设置 firewalld 允许 ssh 远程连接（仅公司内部网络，由 g_sshd_white_list 全局参数预定义）"
+      firewalld:
+        rich_rule: 'rule family="ipv4" source address="{{ item }}" port protocol="tcp" port="{{ r_sshd_port.stdout }}" accept'
+        permanent: yes
+        state: enabled
+        immediate: no
+      become: true
+      with_items: "{{ g_sshd_white_list }}"
+      when: ansible_distribution_major_version | int == 7 and r_service_iptable_status.rc in(0,)
+
+- block:
+    - name: "【OSInitFirewall】重启 iptables"
+      service:
+        name: iptables
+        state: restarted
+        enabled: yes
+      become: true
+      when: ansible_distribution_major_version | int == 6
+    - name: "【OSInitFirewall】重启 firewalld"
+      service:
+        name: firewalld
+        state: restarted
+        enabled: yes
+      become: true
+      when: ansible_distribution_major_version | int == 7
+  when: r_service_iptable_status.rc in(0,)
+
+- block:
+    - name: "【OSInitFirewall】禁止 iptables 自启动（iptables 当前未在运行中）"
+      service:
+        name: iptables
+        state: stopped
+        enabled: no
+      become: true
+      when: ansible_distribution_major_version | int == 6
+      failed_when: " 1 == 2"
+    - name: "【OSInitFirewall】禁止 firewalld 自启动（firewalld 当前未在运行中）"
+      service:
+        name: firewalld
+        state: stopped
+        enabled: no
+      become: true
+      when: ansible_distribution_major_version | int == 7
+      failed_when: " 1 == 2"
+  when: r_service_iptable_status.rc not in(0,)
+
+- debug:
+    msg:
+      - "Job 运行前防火墙并未运行中，请手动启动防火墙！"
+      - "启动前使用 ss -antlp 查看运行中端口及连接，以进行合并操作！"
+      - "firewalld：/etc/firewalld/zones/public.xml，或使用 firewall-offline-cmd 执行离线配置！"
+      - "iptables：/etc/sysconfig/iptables"
+      - "切记最后将防火墙服务设置为自启动！"
+  when: r_service_iptable_status.rc not in(0,)

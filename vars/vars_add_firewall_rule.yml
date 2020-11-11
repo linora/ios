@@ -1,0 +1,4 @@
+---
+
+c_os_white_ipv4: "{{ lookup('env', 'os_white_ipv4') }}"
+c_os_port: "{{ lookup('env', 'os_port') }}"

@@ -1,0 +1,4 @@
+---
+
+- name: "【OSSetupVars】setup vars for {{ action }}"
+  include_vars: "vars_{{ action }}.yml"

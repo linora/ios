@@ -1,0 +1,95 @@
+---
+########################################################################
+# 【行为概述】
+# 调用：precheck
+# 检查防火墙是否正在运行中
+# 【防火墙运行中时执行】
+## 添加 iptables 规则
+## 去重、重启及持久化当前 iptables 规则
+## 添加 firewalld 规则
+## 重启并设置 firewalld 服务自启动
+# 【防火墙未运行中时执行】
+## 禁止 iptables 自启动（iptables 当前未在运行中）
+## 禁止 firewalld 自启动（firewalld 当前未在运行中）
+
+
+
+- include_tasks: setup_vars.yml
+- include_tasks: precheck.yml
+
+# 适配 include_role 调用
+- set_fact:
+    l_os_version: "{{ c_os_version | default(ansible_distribution_major_version) }}"
+
+- block:
+    - name: "【OSAddFirewallRule】检查防火墙是否正在运行中"
+      shell:
+        "service {{ 'iptables' if ansible_distribution_major_version | int in (5, 6) else 'firewalld' }} status"
+      become: true
+      register: r_service_iptable_status
+      failed_when: " 1 == 2 "
+      args:
+        warn: false
+
+- block:
+    - name: "【OSAddFirewallRule】添加 iptables 规则"
+      iptables:
+        action: insert
+        chain: INPUT
+        source: "{{ c_os_white_ipv4 }}"
+        protocol: tcp
+        destination_port: "{{ c_os_port }}"
+        ctstate: NEW
+        syn: match
+        jump: ACCEPT
+        comment: by db2s.
+      become: true
+      when: l_os_version | int == 6
+    - name: "【OSAddFirewallRule】去重、重启及持久化当前 iptables 规则"
+      shell:
+        cmd: |
+          backup_file="{{ g_remote_manual_backup_dir }}/iptables_backup$(date +%s%N)" && \
+          iptables-save > ${backup_file} && \
+          iptables-save | awk '!x[$0]++' > /tmp/iptables.conf && \
+          iptables -F && \
+          iptables-restore < /tmp/iptables.conf && \
+          service iptables save && \
+          service iptables restart && \
+          chkconfig iptables on
+      become: true
+      when: l_os_version | int == 6
+    - name: "【OSAddFirewallRule】添加 firewalld 规则"
+      firewalld:
+        rich_rule: 'rule family="ipv4" source address="{{ c_os_white_ipv4 }}" port protocol="tcp" port="{{ c_os_port }}" accept'
+        permanent: yes
+        state: enabled
+        immediate: no
+      become: true
+      when: l_os_version | int == 7
+    - name: "【OSAddFirewallRule】重启并设置 firewalld 服务自启动"
+      service:
+        name: firewalld
+        state: restarted
+        enabled: yes
+      become: true
+      when: l_os_version | int == 7
+  when: r_service_iptable_status.rc in(0,)
+
+- block:
+    - name: "【OSAddFirewallRule】禁止 iptables 自启动（iptables 当前未在运行中）"
+      service:
+        name: iptables
+        state: stopped
+        enabled: no
+      become: true
+      when: ansible_distribution_major_version | int == 6
+      failed_when: " 1 == 2"
+    - name: "【OSAddFirewallRule】禁止 firewalld 自启动（firewalld 当前未在运行中）"
+      service:
+        name: firewalld
+        state: stopped
+        enabled: no
+      become: true
+      when: ansible_distribution_major_version | int == 7
+      failed_when: " 1 == 2"
+  when: r_service_iptable_status.rc not in(0,)

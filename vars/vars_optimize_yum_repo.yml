@@ -1,0 +1,3 @@
+---
+
+c_wx_api_key: "{{ lookup('env', 'wx_api_key') }}"

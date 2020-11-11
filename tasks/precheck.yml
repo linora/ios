@@ -1,0 +1,12 @@
+---
+########################################################################
+# 【行为概述】
+# 检查当前平台是否受支持
+
+- name: "【OSCOMMCheck】确认目标主机操作系统为受支持的平台"
+  assert:
+    that:
+      - "ansible_distribution in ('CentOS',)"
+      - "ansible_distribution_major_version | int in (6, 7)"
+    fail_msg: "Not supported OS!"
+    success_msg: "Supported OS!"

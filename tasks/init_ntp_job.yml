@@ -1,0 +1,38 @@
+---
+########################################################################
+# 【行为概述】
+# 调用：precheck
+# 安装依赖包
+# 验证时间服务器是否可用
+# 部分时间同步 job
+
+
+
+- include_tasks: precheck.yml
+
+- block:
+    - set_fact:
+        l_ntpdate_bin: /usr/sbin/ntpdate
+        l_hwclock_bin: /usr/sbin/hwclock
+    - name: "【OSInitNTPJob】安装依赖包"
+      yum:
+        name:
+          - ntpdate
+      become: true
+    - name: "【OSInitNTPJob】验证时间服务器是否可用"
+      shell:
+        cmd: |
+          {{ l_ntpdate_bin }} {{ item }} && \
+          {{ l_hwclock_bin }} -w
+      become: true
+      with_items: "{{ g_ntp_server }}"
+    - name: "【OSInitNTPJob】部署 ntp 时间同步任务"
+      cron:
+        name: "ntp time sync job {{ index }}"
+        minute: "*/10"
+        job: "{{ l_ntpdate_bin }} {{ item }} && /usr/sbin/hwclock -w"
+        backup: yes
+      become: true
+      loop: "{{ g_ntp_server }}"
+      loop_control:
+        index_var: index
